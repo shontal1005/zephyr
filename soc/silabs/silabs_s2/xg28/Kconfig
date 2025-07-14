@@ -1,4 +1,4 @@
-# Copyright (c) 2025 Christoph Jans
+# Copyright (c) 2025 Shontal Biton
 # SPDX-License-Identifier: Apache-2.0
 
 config SOC_SILABS_XG28
@@ -18,3 +18,6 @@ config SOC_SILABS_XG28
 	select SOC_GECKO_EMU
 	select SOC_GECKO_GPIO
 	select SOC_GECKO_SE
+
+config SOC_SERIES_EFR32ZG28
+	select SOC_GECKO_HAS_RADIO
