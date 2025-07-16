@@ -1,0 +1,5 @@
+description: radio drivers for gecko
+
+compatible: "efr32,radio-gecko"
+
+include: silabs,series2-radio.yaml

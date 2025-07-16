@@ -1,0 +1,22 @@
+config RADIO_EFR32
+	bool "EFR32 radio driver"
+    select SOC_GECKO_CUSTOM_RADIO_PHY
+	default y
+	help
+	  Enables EFR32 radio driver.
+
+if RADIO_EFR32
+
+config RADIO_EFR32_TX_BUFFER_SIZE
+    int
+    default 1024
+    help
+        Size of the TX FIFO, must be a power of 2 from 64 to 4096
+
+config RADIO_EFR32_RX_BUFFER_SIZE
+    int
+    default 1024
+    help
+        Size of the RX FIFO, must be a power of 2 from 64 to 4096
+
+endif
