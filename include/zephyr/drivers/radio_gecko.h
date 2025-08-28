@@ -6,8 +6,6 @@
 
 /* !!! These will be configs in the future !!! */
 #define PACKET_BUFFER_SIZE (1024)
-#define RX_BUFFER_SIZE (1024)
-#define TX_BUFFER_SIZE (1024)
 
 enum event_type {
 
@@ -31,6 +29,7 @@ enum event_type {
 };
 
 typedef void(*radio_event_callback)(void);
+typedef void (*radio_irq_config_func)(const struct device* dev);
 
 typedef struct radio_event {
 	enum event_type event;
@@ -39,7 +38,7 @@ typedef struct radio_event {
 } radio_event;
 
 struct radio_conf {
-
+	radio_irq_config_func irq_config_func;
 };
 
 struct radio_api {

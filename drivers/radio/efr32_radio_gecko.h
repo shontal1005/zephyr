@@ -7,6 +7,7 @@ typedef struct radio_data {
 	uint32_t configuration;
 	uint16_t channel;
 	uint8_t packet_buffer[PACKET_BUFFER_SIZE];
-	uint8_t RX_buffer[RX_BUFFER_SIZE];
-	uint8_t TX_buffer[TX_BUFFER_SIZE];
+	uint8_t RX_buffer[CONFIG_RADIO_EFR32_RX_BUFFER_SIZE] __aligned(4);
+	uint8_t TX_buffer[CONFIG_RADIO_EFR32_TX_BUFFER_SIZE] __aligned(4);
 } radio_data;
+
