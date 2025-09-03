@@ -9,13 +9,13 @@ if RADIO_EFR32
 
 config RADIO_EFR32_TX_BUFFER_SIZE
     int
-    default 1024
+    default 256
     help
         Size of the TX FIFO, must be a power of 2 from 64 to 4096
 
 config RADIO_EFR32_RX_BUFFER_SIZE
     int
-    default 1024
+    default 256
     help
         Size of the RX FIFO, must be a power of 2 from 64 to 4096
 
