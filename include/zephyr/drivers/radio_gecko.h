@@ -1,3 +1,5 @@
+#pragma once
+
 #include <stdint.h>
 
 #include <zephyr/device.h>
@@ -37,61 +39,59 @@ typedef enum raido_status {
 	RADIO_START_TX_FAILED,
 	RADIO_START_RX_FAILED
 
-} radio_status;
-
-typedef void(*radio_event_callback)(void);
-typedef void (*radio_irq_config_func)(const struct device* dev);
+} radio_status_t;
 
 typedef struct radio_event {
+
+	/* The event that accured */
 	enum event_type event;
+
+	/* The data received if exist */
 	uint8_t* data;
+
+	/* Data buffer size */
 	int data_size;
+
 } radio_event;
 
+typedef void(*radio_event_callback)(struct radio_event* event);
+
 struct radio_conf {
-	radio_irq_config_func irq_config_func;
 };
 
 struct radio_api {
 	int (*radio_init)(const struct device* radio_dev, uint32_t configuration, uint16_t channel, radio_event_callback callback);
-	int (*radio_start_cw)(const struct device* radio_dev);
-	int (*radio_stop_cw)(const struct device* radio_dev);
-	int (*radio_send)(const struct device* radio_dev, uint16_t channel, const uint8_t* payload, int len, bool clear_fifo);
-	int (*radio_start_rx_listening)(const struct device* radio_dev, uint16_t channel);
-
+	int (*radio_start_cw)(void);
+	int (*radio_stop_cw)(void);
+	int (*radio_send)(uint16_t channel, const uint8_t* payload, int len, bool clear_fifo);
+	int (*radio_start_rx_listening)(uint16_t channel);
 };
+
+extern const struct radio_api* radio_driver_api;
 
 static inline int radio_init(const struct device* radio_dev, uint32_t configuration, uint16_t channel, radio_event_callback callback)
 {
-	const struct radio_api* api = (const struct radio_api*)radio_dev->api;
+	struct radio_api* api = (struct radio_api*)radio_dev->api;
 
 	return api->radio_init(radio_dev, configuration, channel, callback);
 }
 
-static inline int radio_start_cw(const struct device* radio_dev)
+static inline int radio_start_cw()
 {
-	const struct radio_api* api = (const struct radio_api*)radio_dev->api;
-
-	return api->radio_start_cw(radio_dev);
+	return radio_driver_api->radio_start_cw();
 }
 
-static inline int radio_stop_cw(const struct device* radio_dev)
+static inline int radio_stop_cw()
 {
-	const struct radio_api* api = (const struct radio_api*)radio_dev->api;
-
-	return api->radio_stop_cw(radio_dev);
+	return radio_driver_api->radio_stop_cw();
 }
 
-static inline int radio_send(const struct device* radio_dev, uint16_t channel, const uint8_t* payload, int len, bool clear_fifo)
+static inline int radio_send(uint16_t channel, const uint8_t* payload, int len, bool clear_fifo)
 {
-	const struct radio_api* api = (const struct radio_api*)radio_dev->api;
-
-	return api->radio_send(radio_dev, channel, payload, len, clear_fifo);
+	return radio_driver_api->radio_send(channel, payload, len, clear_fifo);
 }
 
-static inline int radio_start_rx_listening(const struct device* radio_dev, uint16_t channel)
+static inline int radio_start_rx_listening(uint16_t channel)
 {
-	const struct radio_api* api = (const struct radio_api*)radio_dev->api;
-
-	return api->radio_start_rx_listening(radio_dev, channel);
+	return radio_driver_api->radio_start_rx_listening(channel);
 }
