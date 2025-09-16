@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/irq.h>
+#include <zephyr/sys/byteorder.h>
 
 #include "efr32_radio_gecko.h"
 #include "xg28_rb4401c/rail_config.h"
@@ -12,6 +13,28 @@ LOG_MODULE_REGISTER(driver);
 
 struct radio_data* radio_driver_data = NULL;
 const struct radio_api* radio_driver_api = NULL;
+static __ALIGNED(RAIL_FIFO_ALIGNMENT) uint8_t rx_fifo[CONFIG_RADIO_EFR32_RX_BUFFER_SIZE];
+
+#define VARIABLE_LENGTH_LENGTH_FIELD (2)
+
+/**
+ * From silabs rail efr32 documentation: https://docs.silabs.com/rail/latest/rail-api/efr32-main
+ * The chosen buffer size limits the maximum size of receive packets in packet mode and determines the size of the receive
+ * FIFO in FIFO mode. Because each receive packet has several bytes of overhead,
+ * you can only receive up to one (buffer size - overhead) byte packet without switching to FIFO mode.
+ * In FIFO mode, you must read out packet data as you approach this limit and store it off to construct the full packet later.
+ * This overhead is currently 8 bytes on all EFR32 Series-2 platforms. Note that this overhead may increase or decrease
+ * in future releases as the functionality is changed though large jumps are not expected in either direction.
+ *
+ * The Rail overhead is added to each packet added to RX FIFO
+ */
+#define RADIO_EFR32_PACKET_STORAGE_OVERHEAD (8)
+
+/**
+ * This is the size of the actual data from the user. In the
+ * driver, the payload size (2 bytes) and rail overhead (8 bytes) are added to the payload.
+ */
+#define RADIO_EFR32_MAX_PACKET_LENGTH (CONFIG_RADIO_EFR32_RX_BUFFER_SIZE - RADIO_EFR32_PACKET_STORAGE_OVERHEAD - VARIABLE_LENGTH_LENGTH_FIELD)
 
 typedef enum communication_status {
 
@@ -80,13 +103,37 @@ int efr32_radio_stop_cw()
 	return RADIO_SUCCESS;
 }
 
+int create_radio_packet(uint8_t* payload_to_send, const uint8_t* payload, uint16_t len)
+{
+	*(uint16_t*)payload_to_send = sys_cpu_to_le16(len);
+
+	if (len > RADIO_EFR32_MAX_PACKET_LENGTH)
+	{
+		return RADIO_TX_CREATE_PACKET_FAILED;
+	}
+
+	void* ret = memcpy(payload_to_send + 2, payload, len);
+	if (ret == NULL)
+	{
+		return RADIO_TX_CREATE_PACKET_FAILED;
+	}
+
+	return RADIO_SUCCESS;
+}
+
 int efr32_radio_send(uint16_t channel, const uint8_t* payload, int len, bool clear_fifo)
 {
 	RAIL_Status_t status;
 	int ret;
 
-	ret = RAIL_WriteTxFifo(radio_driver_data->rail_handle, payload, len, clear_fifo);
-	if (ret != len) {
+	ret = create_radio_packet(radio_driver_data->payload_to_send, payload, len);
+	if (ret != RADIO_SUCCESS)
+	{
+		return RADIO_TX_CREATE_PACKET_FAILED;
+	}
+
+	ret = RAIL_WriteTxFifo(radio_driver_data->rail_handle, radio_driver_data->payload_to_send, len + VARIABLE_LENGTH_LENGTH_FIELD, clear_fifo);
+	if (ret != len + VARIABLE_LENGTH_LENGTH_FIELD) {
 		LOG_ERR("RAIL_WriteTxFifo(): %d", ret);
 		return RADIO_WRITE_TX_FIFO_FAILED;
 	}
@@ -96,7 +143,7 @@ int efr32_radio_send(uint16_t channel, const uint8_t* payload, int len, bool cle
 		LOG_ERR("RAIL_StartTx(): %d ", status);
 		return RADIO_START_TX_FAILED;
 	}
-	LOG_HEXDUMP_INF(payload, len, "tx data:");
+	LOG_HEXDUMP_INF(radio_driver_data->payload_to_send, len + VARIABLE_LENGTH_LENGTH_FIELD, "tx data:");
 
 	return RADIO_SUCCESS;
 }
@@ -123,14 +170,15 @@ int rx_packets(RAIL_Handle_t rail_handle)
 	if (handle == RAIL_RX_PACKET_HANDLE_INVALID) {
 		return RX_HANDLER_INVALID;
 	}
-	if (info.packetBytes < sizeof(radio_driver_data->RX_buffer)) {
-		RAIL_CopyRxPacket(radio_driver_data->RX_buffer, &info);
+
+	if (info.packetBytes < sizeof(radio_driver_data->received_packet_buffer)) {
+		RAIL_CopyRxPacket(radio_driver_data->received_packet_buffer, &info);
 	}
 	status = RAIL_ReleaseRxPacket(rail_handle, handle);
 	if (status) {
 		LOG_ERR("RAIL_ReleaseRxPacket(): %d", status);
 	}
-	if (info.packetBytes >= sizeof(radio_driver_data->RX_buffer)) {
+	if (info.packetBytes >= sizeof(radio_driver_data->received_packet_buffer)) {
 		return RX_PACKET_TOO_LARGE;
 	}
 
@@ -154,8 +202,8 @@ void rail_on_event(RAIL_Handle_t rail_handler, RAIL_Events_t events)
 			communication_status = rx_packets(rail_handler);
 			if (communication_status == RX_SUCCESS) {
 				radio_driver_data->event.event = RX_DONE;
-				radio_driver_data->event.data = radio_driver_data->RX_buffer;
-				radio_driver_data->event.data_size = sizeof(radio_driver_data->RX_buffer);
+				radio_driver_data->event.data_size = (uint16_t)radio_driver_data->received_packet_buffer[0] | ((uint16_t)radio_driver_data->received_packet_buffer[1] << 8);
+				radio_driver_data->event.data = radio_driver_data->received_packet_buffer + VARIABLE_LENGTH_LENGTH_FIELD;
 				radio_driver_data->callback(&radio_driver_data->event);
 			}
 	} else if ((events & RAIL_EVENTS_RX_COMPLETION) && (communication_status != RX_SUCCESS)) {
@@ -262,7 +310,11 @@ static int efr32_radio_initialization(const struct device* dev)
 	if (ret != CONFIG_RADIO_EFR32_TX_BUFFER_SIZE) {
 		LOG_ERR("RAIL_SetTxFifo(): %d != %d", ret, CONFIG_RADIO_EFR32_TX_BUFFER_SIZE);
 	}
-
+	uint16_t rx_buffer_size = CONFIG_RADIO_EFR32_RX_BUFFER_SIZE;
+	status = RAIL_SetRxFifo(data->rail_handle, &(rx_fifo)[0], &rx_buffer_size);
+	if (status || rx_buffer_size != CONFIG_RADIO_EFR32_RX_BUFFER_SIZE) {
+		LOG_ERR("RAIL_SetRxFifo(): status: %d, sizes: %d != %d", status, rx_buffer_size, CONFIG_RADIO_EFR32_RX_BUFFER_SIZE);
+	}
 	return 0;
 }
 

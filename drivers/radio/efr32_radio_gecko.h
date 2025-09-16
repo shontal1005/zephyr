@@ -8,9 +8,8 @@ struct radio_data {
 	radio_event_callback callback;
 	uint32_t configuration;
 	uint16_t channel;
-	uint8_t packet_buffer[PACKET_BUFFER_SIZE];
+	uint8_t payload_to_send[CONFIG_RADIO_EFR32_TX_BUFFER_SIZE];
+	uint8_t received_packet_buffer[CONFIG_RADIO_EFR32_RX_BUFFER_SIZE];
 	uint8_t TX_buffer[CONFIG_RADIO_EFR32_TX_BUFFER_SIZE] __aligned(4);
-
-	/* The RX buffer need to be larger then the TX buffer */
-	uint8_t RX_buffer[CONFIG_RADIO_EFR32_RX_BUFFER_SIZE + 1] __aligned(4);
+	// uint8_t RX_buffer[CONFIG_RADIO_EFR32_RX_BUFFER_SIZE] __aligned(4);
 } __packed;
