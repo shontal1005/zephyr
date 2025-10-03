@@ -266,6 +266,51 @@ int rx_packets(RAIL_Handle_t rail_handle)
 }
 
 /**
+ * Set the radio driver channel.
+ *
+ * @param[in] channel The new channel to set.
+ *
+ * @return Status code indicates error.
+ *
+ */
+int efr32_radio_set_channel(uint16_t channel)
+{
+
+}
+
+/**
+ * Set the frequency of the radio driver channel.
+ *
+ * @param[in] frequency The new frequency to set.
+ *
+ * @return Status code indicates error.
+ *
+ */
+int efr32_radio_set_frequency(uint32_t frequency)
+{
+	RAIL_ChannelConfigEntry_t* channel_group;
+	uint16_t status;
+
+	if(channelConfigs[radio_driver_data->configuration]->configs[radio_driver_data->channel].baseFrequency == frequency)
+	{
+		/* Nothing to do */
+		return RADIO_SUCCESS;
+	}
+
+	channel_group = (RAIL_ChannelConfigEntry_t*)&(channelConfigs[radio_driver_data->configuration]->configs[radio_driver_data->channel]);
+	channel_group->baseFrequency = frequency;
+
+	RAIL_Idle(radio_driver_data->rail_handle, RAIL_IDLE_ABORT, true);
+	status = RAIL_ConfigChannels(radio_driver_data->rail_handle, channelConfigs[radio_driver_data->configuration], rail_on_channel_config);
+	if (status) {
+		LOG_ERR("RAIL_ConfigChannels(): %d", status);
+		return RADIO_CONFIG_CHANNEL_FAILED;
+	}
+
+	return RADIO_SUCCESS;
+}
+
+/**
  * A callback that will be executed when a RAIL event occurs.
  * This function handles various radio states and calls the appropriate function on each event.
  *
