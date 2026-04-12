@@ -1151,6 +1151,28 @@ static int stm32_dcmipp_stream_enable(const struct device *dev)
 	}
 #endif
 
+	/* Enable CMIER frame/vsync/overrun interrupts for the active pipe.
+	 * HAL_DCMIPP_{,CSI_}PIPE_Start only sets PIPEN + CPTREQ; it does NOT
+	 * touch CMIER. Without this explicit enable the DCMIPP NVIC line
+	 * never asserts for pixel pipes 1/2 and FrameEventCallback never
+	 * fires — see frame-fetch-bug.md.
+	 */
+	{
+		uint32_t its = 0;
+
+		if (pipe->id == DCMIPP_PIPE0) {
+			its = DCMIPP_IT_PIPE0_FRAME | DCMIPP_IT_PIPE0_VSYNC |
+			      DCMIPP_IT_PIPE0_OVR;
+		} else if (pipe->id == DCMIPP_PIPE1) {
+			its = DCMIPP_IT_PIPE1_FRAME | DCMIPP_IT_PIPE1_VSYNC |
+			      DCMIPP_IT_PIPE1_OVR;
+		} else if (pipe->id == DCMIPP_PIPE2) {
+			its = DCMIPP_IT_PIPE2_FRAME | DCMIPP_IT_PIPE2_VSYNC |
+			      DCMIPP_IT_PIPE2_OVR;
+		}
+		__HAL_DCMIPP_ENABLE_IT(&dcmipp->hdcmipp, its);
+	}
+
 	/* Enable the DCMIPP Pipeline */
 	ret = stm32_dcmipp_start_pipeline(dev, pipe);
 	if (ret < 0) {
