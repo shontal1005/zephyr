@@ -577,9 +577,26 @@ static int stm32_dcmipp_set_fmt(const struct device *dev, struct video_format *f
 	}
 
 	if (fmt->width != pipe->compose.width || fmt->height != pipe->compose.height) {
-		LOG_ERR("Format width/height (%d x %d) do not match compose width/height (%d x %d)",
-			fmt->width, fmt->height, pipe->compose.width, pipe->compose.height);
-		return -EINVAL;
+		/* n6cam-t66.5: allow PIPE0 (dump) to track runtime-requested
+		 * resolution changes. pipe_dump is a raw passthrough pipe —
+		 * whatever the sensor outputs, DCMIPP DMAs straight to memory
+		 * with no crop/scale/ISP, so the only thing we need to do is
+		 * advance both the pipe's compose rectangle AND the shared
+		 * source_fmt (which stream_enable pushes to the sensor via
+		 * video_set_format) to the new dimensions. Pixel pipes
+		 * PIPE1/PIPE2 still reject a mismatch because their compose
+		 * is bound to ISP decimation ratios.
+		 */
+		if (pipe->id != DCMIPP_PIPE0) {
+			LOG_ERR("Format width/height (%d x %d) do not match compose width/height (%d x %d)",
+				fmt->width, fmt->height, pipe->compose.width, pipe->compose.height);
+			return -EINVAL;
+		}
+
+		pipe->compose.width = fmt->width;
+		pipe->compose.height = fmt->height;
+		dcmipp->source_fmt.width = fmt->width;
+		dcmipp->source_fmt.height = fmt->height;
 	}
 
 	stm32_dcmipp_compute_fmt_pitch(pipe->id, fmt);
@@ -1099,6 +1116,54 @@ static int stm32_dcmipp_stream_enable(const struct device *dev)
 		}
 
 		if (VIDEO_FMT_IS_BAYER(dcmipp->source_fmt.pixelformat)) {
+			/* n6cam-t66.12: the ISP's RawBayer2RGB demosaic block has
+			 * a per-phase TYPE register (P1DMCR.TYPE) that selects the
+			 * starting pixel of the 2x2 Bayer mosaic. HAL_..._Enable
+			 * only flips the ENABLE bit; it does NOT write the type,
+			 * so it stays at the reset value 0 = DCMIPP_RAWBAYER_RGGB.
+			 * For a GRBG (or any non-RGGB) sensor this produced the
+			 * 2x2 grid checkerboard we saw during bring-up. Map the
+			 * source pixelformat to the matching HAL phase enum
+			 * explicitly before enabling the block.
+			 */
+			DCMIPP_RawBayer2RGBConfTypeDef r2r_cfg = {
+				.VLineStrength = DCMIPP_RAWBAYER_ALGO_STRENGTH_3,
+				.HLineStrength = DCMIPP_RAWBAYER_ALGO_STRENGTH_3,
+				.PeakStrength  = DCMIPP_RAWBAYER_ALGO_STRENGTH_3,
+				.EdgeStrength  = DCMIPP_RAWBAYER_ALGO_STRENGTH_3,
+			};
+
+			switch (dcmipp->source_fmt.pixelformat) {
+			case VIDEO_PIX_FMT_SRGGB8:
+			case VIDEO_PIX_FMT_SRGGB10:
+				r2r_cfg.RawBayerType = DCMIPP_RAWBAYER_RGGB;
+				break;
+			case VIDEO_PIX_FMT_SGRBG8:
+			case VIDEO_PIX_FMT_SGRBG10:
+				r2r_cfg.RawBayerType = DCMIPP_RAWBAYER_GRBG;
+				break;
+			case VIDEO_PIX_FMT_SGBRG8:
+			case VIDEO_PIX_FMT_SGBRG10:
+				r2r_cfg.RawBayerType = DCMIPP_RAWBAYER_GBRG;
+				break;
+			case VIDEO_PIX_FMT_SBGGR8:
+			case VIDEO_PIX_FMT_SBGGR10:
+				r2r_cfg.RawBayerType = DCMIPP_RAWBAYER_BGGR;
+				break;
+			default:
+				r2r_cfg.RawBayerType = DCMIPP_RAWBAYER_RGGB;
+				break;
+			}
+
+			hal_ret = HAL_DCMIPP_PIPE_SetISPRawBayer2RGBConfig(&dcmipp->hdcmipp,
+									   DCMIPP_PIPE1,
+									   &r2r_cfg);
+			if (hal_ret != HAL_OK) {
+				LOG_ERR("Failed to configure RawBayer2RGB phase");
+				ret = -EIO;
+				goto out;
+			}
+
 			/* Enable demosaicing if input format is Bayer */
 			hal_ret = HAL_DCMIPP_PIPE_EnableISPRawBayer2RGB(&dcmipp->hdcmipp,
 									DCMIPP_PIPE1);
@@ -1150,6 +1215,28 @@ static int stm32_dcmipp_stream_enable(const struct device *dev)
 		}
 	}
 #endif
+
+	/* Enable CMIER frame/vsync/overrun interrupts for the active pipe.
+	 * HAL_DCMIPP_{,CSI_}PIPE_Start only sets PIPEN + CPTREQ; it does NOT
+	 * touch CMIER. Without this explicit enable the DCMIPP NVIC line
+	 * never asserts for pixel pipes 1/2 and FrameEventCallback never
+	 * fires — see frame-fetch-bug.md.
+	 */
+	{
+		uint32_t its = 0;
+
+		if (pipe->id == DCMIPP_PIPE0) {
+			its = DCMIPP_IT_PIPE0_FRAME | DCMIPP_IT_PIPE0_VSYNC |
+			      DCMIPP_IT_PIPE0_OVR;
+		} else if (pipe->id == DCMIPP_PIPE1) {
+			its = DCMIPP_IT_PIPE1_FRAME | DCMIPP_IT_PIPE1_VSYNC |
+			      DCMIPP_IT_PIPE1_OVR;
+		} else if (pipe->id == DCMIPP_PIPE2) {
+			its = DCMIPP_IT_PIPE2_FRAME | DCMIPP_IT_PIPE2_VSYNC |
+			      DCMIPP_IT_PIPE2_OVR;
+		}
+		__HAL_DCMIPP_ENABLE_IT(&dcmipp->hdcmipp, its);
+	}
 
 	/* Enable the DCMIPP Pipeline */
 	ret = stm32_dcmipp_start_pipeline(dev, pipe);

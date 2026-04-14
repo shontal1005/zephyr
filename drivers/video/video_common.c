@@ -28,7 +28,17 @@ LOG_MODULE_REGISTER(video_common, CONFIG_VIDEO_LOG_LEVEL);
 #define VIDEO_COMMON_FREE(block) shared_multi_heap_free(block)
 #else
 
-#if !defined(CONFIG_VIDEO_BUFFER_POOL_ZEPHYR_REGION)
+#if defined(CONFIG_NOCACHE_MEMORY) && !defined(CONFIG_VIDEO_BUFFER_POOL_ZEPHYR_REGION)
+/* n6cam local patch: when NOCACHE_MEMORY is enabled, route the video
+ * buffer pool into the .nocache section so STM32 peripheral DMA drivers
+ * (uart_stm32 async TX, etc.) that gate on stm32_buf_in_nocache() will
+ * accept frame buffers as DMA sources. The __nocache_noinit macro
+ * lives in section_tags.h and resolves to __in_section_unique(nocache)
+ * when CONFIG_NOCACHE_MEMORY=y.
+ */
+#include <zephyr/linker/section_tags.h>
+#define VIDEO_BUFFER_POOL_REGION_NAME __nocache_noinit
+#elif !defined(CONFIG_VIDEO_BUFFER_POOL_ZEPHYR_REGION)
 #define VIDEO_BUFFER_POOL_REGION_NAME __noinit_named(kheap_buf_video_buffer_pool)
 #else
 #define VIDEO_BUFFER_POOL_REGION_NAME Z_GENERIC_SECTION(CONFIG_VIDEO_BUFFER_POOL_ZEPHYR_REGION_NAME)
